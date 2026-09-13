@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+mvp_output/
+demo_output/
+recovered/
+test_output/
+dd_output/
+tmp_final_debug/
+*.img
+*.dd
+output/
+tmp_*/
