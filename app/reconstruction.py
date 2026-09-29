@@ -4,7 +4,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from app.image_reader import ImageReader
-from app.validator import JPEGValidator
+from app.signatures import SignatureRegistry
+from app.validator import BMPValidator, GIFValidator, JPEGValidator, MP3Validator, MP4Validator, PDFValidator, PNGValidator, TIFFValidator, WebPValidator, parse_bmp, parse_gif, parse_mp4_boxes, parse_tiff, parse_webp
 
 
 @dataclass(frozen=True)
@@ -13,6 +14,7 @@ class Fragment:
     source_offset: int
     size: int
     data: bytes
+    file_type: str = "JPEG"
 
 
 @dataclass
@@ -64,22 +66,24 @@ def calculate_confidence(
 
 
 class ReconstructionEngine:
-    def __init__(self, image_path: str | Path, output_dir: str | Path = "reconstructed", chunk_size: int = 4096, max_gap_size: int = 256) -> None:
+    def __init__(self, image_path: str | Path, output_dir: str | Path = "reconstructed", chunk_size: int = 4096, max_gap_size: int = 256, file_type: str = "JPEG") -> None:
         self.image_path = Path(image_path)
         self.output_dir = Path(output_dir)
         self.chunk_size = chunk_size
         self.max_gap_size = max_gap_size
+        self.file_type = file_type
+        self.definition = SignatureRegistry().get(file_type)
 
     def reconstruct(self, fragments: list[Fragment], recovery_id: str = "REC-0001") -> ReconstructionResult:
         if not fragments:
             return ReconstructionResult(
                 recovery_id=recovery_id,
-                file_type="JPEG",
+                file_type=self.file_type,
                 fragments_used=0,
                 total_size=0,
                 status="REJECTED",
                 confidence=0.0,
-                output_path=str(self.output_dir / f"{recovery_id}.jpg"),
+                output_path=str(self.output_dir / f"{recovery_id}{self.definition.extension}"),
                 warnings=["No fragments supplied."],
                 errors=["Reconstruction refused: no candidate fragments available."],
             )
@@ -91,12 +95,12 @@ class ReconstructionEngine:
         if errors:
             return ReconstructionResult(
                 recovery_id=recovery_id,
-                file_type="JPEG",
+                file_type=self.file_type,
                 fragments_used=len(selected),
                 total_size=0,
                 status="REJECTED",
                 confidence=0.0,
-                output_path=str(self.output_dir / f"{recovery_id}.jpg"),
+                output_path=str(self.output_dir / f"{recovery_id}{self.definition.extension}"),
                 warnings=warnings,
                 errors=errors,
                 fragments_considered=considered,
@@ -106,7 +110,7 @@ class ReconstructionEngine:
             )
 
         assembled = b"".join(fragment.data for fragment in selected)
-        validator = JPEGValidator(assembled)
+        validator = _make_validator(self.file_type, assembled)
         validation = validator.validate()
 
         if validation.is_valid:
@@ -135,7 +139,7 @@ class ReconstructionEngine:
             continuity_ratio=self._gap_ratio(gaps, selected),
         )
 
-        output_path = self.output_dir / f"{recovery_id}.jpg"
+        output_path = self.output_dir / f"{recovery_id}{self.definition.extension}"
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
         if status in {"RECONSTRUCTED", "PARTIAL"}:
@@ -143,7 +147,7 @@ class ReconstructionEngine:
 
         return ReconstructionResult(
             recovery_id=recovery_id,
-            file_type="JPEG",
+            file_type=self.file_type,
             fragments_used=len(selected),
             total_size=len(assembled),
             status=status,
@@ -162,13 +166,14 @@ class ReconstructionEngine:
             return [], [], [], ["No fragments available."]
 
         seed = None
+        signature = self.definition.byte_signature
         for fragment in fragments:
-            if fragment.data.startswith(b"\xff\xd8\xff"):
+            if _has_format_start(self.file_type, self.definition.signatures, fragment.data):
                 seed = fragment
                 break
 
         if seed is None:
-            return [], [], [], ["Reconstruction requires an explicit JPEG SOI marker at the start of the candidate stream."]
+            return [], [], [], [f"Reconstruction requires an explicit {self.file_type} signature at the start of the candidate stream."]
 
         selected: list[Fragment] = [seed]
         warnings: list[str] = []
@@ -180,12 +185,12 @@ class ReconstructionEngine:
             if fragment.fragment_id == seed.fragment_id:
                 continue
 
-            if fragment.data.startswith(b"\xff\xd8\xff"):
-                errors.append(f"Fragment {fragment.fragment_id} starts with a second JPEG SOI marker; ambiguous candidate rejected.")
+            if fragment.data.startswith(signature):
+                errors.append(f"Fragment {fragment.fragment_id} starts with a second {self.file_type} signature; ambiguous candidate rejected.")
                 continue
 
-            if not self._looks_like_jpeg_fragment(fragment.data):
-                errors.append(f"Fragment {fragment.fragment_id} lacks explicit JPEG structural evidence and was rejected.")
+            if not self._looks_like_format_fragment(fragment.data):
+                errors.append(f"Fragment {fragment.fragment_id} lacks explicit {self.file_type} structural evidence and was rejected.")
                 continue
 
             if fragment.source_offset < last_end:
@@ -202,7 +207,7 @@ class ReconstructionEngine:
             gaps.append(gap)
             last_end = fragment.source_offset + fragment.size
 
-        if len(selected) > 1 and selected[0].data.startswith(b"\xff\xd8\xff") and selected[-1].data.endswith(b"\xff\xd9"):
+        if len(selected) > 1 and selected[0].data.startswith(signature) and selected[-1].data.endswith(self.definition.footer_signature or b""):
             pass
 
         if len(selected) >= 2 and not self._has_completion_evidence(selected):
@@ -211,17 +216,40 @@ class ReconstructionEngine:
         if not selected:
             return [], [], warnings, ["No valid fragments selected."]
 
-        if not any(b"\xff\xd9" in fragment.data for fragment in selected):
-            warnings.append("No EOI marker was found in the selected fragments; reconstruction remains partial.")
+        if not any((self.definition.footer_signature or b"") in fragment.data for fragment in selected):
+            warnings.append(f"No {self.file_type} end marker was found in the selected fragments; reconstruction remains partial.")
 
         if len(selected) > 1 and sum(gaps) > 0:
             warnings.append("Selected fragments are non-contiguous; gaps are preserved as forensic metadata only.")
 
         return selected, gaps, warnings, errors
 
-    def _looks_like_jpeg_fragment(self, data: bytes) -> bool:
+    def _looks_like_format_fragment(self, data: bytes) -> bool:
         if not data:
             return False
+
+        if self.file_type == "PNG":
+            return len(data) >= 12 or data.startswith(self.definition.byte_signature)
+        if self.file_type == "PDF":
+            return any(marker in data for marker in (b"obj", b"endobj", b"trailer", b"startxref", b"%%EOF"))
+        if self.file_type == "MP3":
+            frames, _, _ = _parse_mp3_fragment(data)
+            return bool(frames) or data.startswith(b"ID3")
+        if self.file_type == "MP4":
+            parsed = parse_mp4_boxes(data)
+            return bool(parsed.boxes) or _has_format_start(self.file_type, self.definition.signatures, data)
+        if self.file_type == "GIF":
+            parsed = parse_gif(data)
+            return parsed.image_count > 0 or _has_format_start(self.file_type, self.definition.signatures, data)
+        if self.file_type == "BMP":
+            parsed = parse_bmp(data)
+            return parsed.complete or data.startswith(b"BM")
+        if self.file_type == "TIFF":
+            parsed = parse_tiff(data)
+            return parsed.complete or _has_format_start(self.file_type, self.definition.signatures, data)
+        if self.file_type == "WEBP":
+            parsed = parse_webp(data)
+            return parsed.complete or _has_format_start(self.file_type, self.definition.signatures, data)
 
         jpeg_markers = (
             b"\xff\xe0",
@@ -236,7 +264,7 @@ class ReconstructionEngine:
         if any(marker in data for marker in jpeg_markers):
             return True
 
-        if data.startswith(b"\xff\xd8\xff"):
+        if data.startswith(self.definition.byte_signature):
             return True
 
         printable = sum(1 for byte in data if 32 <= byte < 127 or byte in (9, 10, 13))
@@ -250,11 +278,19 @@ class ReconstructionEngine:
         if not selected:
             return False
         if len(selected) == 1:
-            return selected[0].data.startswith(b"\xff\xd8\xff") and b"\xff\xd9" in selected[0].data
+            return _has_format_start(self.file_type, self.definition.signatures, selected[0].data) and (
+                self.definition.footer_signature is None
+                or self.definition.footer_signature in selected[0].data
+                or self.file_type == "MP3"
+            )
 
         first = selected[0]
         last = selected[-1]
-        return first.data.startswith(b"\xff\xd8\xff") and b"\xff\xd9" in last.data
+        return _has_format_start(self.file_type, self.definition.signatures, first.data) and (
+            self.definition.footer_signature is None
+            or self.definition.footer_signature in last.data
+            or self.file_type == "MP3"
+        )
 
     def _gap_ratio(self, gaps: list[int], selected: list[Fragment]) -> float:
         if not selected:
@@ -287,3 +323,41 @@ class ReconstructionEngine:
                 )
 
         return fragments
+
+
+def _make_validator(file_type: str, data: bytes):
+    if file_type == "PNG":
+        return PNGValidator(data)
+    if file_type == "PDF":
+        return PDFValidator(data)
+    if file_type == "MP3":
+        return MP3Validator(data)
+    if file_type == "MP4":
+        return MP4Validator(data)
+    if file_type == "GIF":
+        return GIFValidator(data)
+    if file_type == "BMP":
+        return BMPValidator(data)
+    if file_type == "TIFF":
+        return TIFFValidator(data)
+    if file_type == "WEBP":
+        return WebPValidator(data)
+    return JPEGValidator(data)
+
+
+def _has_format_signature(signatures: tuple[bytes, ...], data: bytes) -> bool:
+    return any(data.startswith(signature) for signature in signatures)
+
+
+def _has_format_start(file_type: str, signatures: tuple[bytes, ...], data: bytes) -> bool:
+    if file_type == "MP4":
+        return len(data) >= 8 and data[4:8] == b"ftyp"
+    if file_type == "WEBP":
+        return len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP"
+    return _has_format_signature(signatures, data)
+
+
+def _parse_mp3_fragment(data: bytes):
+    from app.validator import parse_mp3_frames
+
+    return parse_mp3_frames(data)

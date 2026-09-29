@@ -4,11 +4,18 @@ from pathlib import Path
 from PIL import Image
 
 from app.recovery import RecoveryEngine
+from app.synthetic_image_generator import make_valid_bmp, make_valid_gif, make_valid_mp3, make_valid_mp4, make_valid_pdf, make_valid_tiff, make_valid_webp
 
 
 def _valid_jpeg() -> bytes:
     buffer = BytesIO()
     Image.new("RGB", (32, 32), color=(7, 11, 19)).save(buffer, format="JPEG", quality=90)
+    return buffer.getvalue()
+
+
+def _valid_png() -> bytes:
+    buffer = BytesIO()
+    Image.new("RGBA", (32, 32), color=(7, 11, 19, 255)).save(buffer, format="PNG")
     return buffer.getvalue()
 
 
@@ -96,3 +103,112 @@ def test_recovery_pipeline_keeps_evidence_file_unchanged(tmp_path: Path) -> None
     assert image_path.read_bytes() == before
     assert output_dir.exists()
     assert any(Path(item.output_path).exists() for item in RecoveryEngine(image_path, output_dir).recover().recovered_files)
+
+
+def test_recovery_pipeline_recovers_mixed_jpeg_and_png(tmp_path: Path) -> None:
+    image_path = tmp_path / "mixed.img"
+    jpeg = _valid_jpeg()
+    png = _valid_png()
+    image_path.write_bytes(b"prefix" + jpeg + b"gap" + png)
+
+    result = RecoveryEngine(image_path, tmp_path / "recovered").recover()
+
+    assert {item.file_type for item in result.recovered_files} == {"JPEG", "PNG"}
+    assert all(item.status == "RECONSTRUCTED" for item in result.recovered_files)
+    assert any(Path(item.output_path).suffix == ".jpg" for item in result.recovered_files)
+    assert any(Path(item.output_path).suffix == ".png" for item in result.recovered_files)
+
+
+def test_recovery_pipeline_recovers_pdf(tmp_path: Path) -> None:
+    image_path = tmp_path / "document.img"
+    image_path.write_bytes(b"prefix" + make_valid_pdf())
+
+    result = RecoveryEngine(image_path, tmp_path / "recovered").recover()
+
+    assert len(result.recovered_files) == 1
+    assert result.recovered_files[0].file_type == "PDF"
+    assert result.recovered_files[0].status == "RECONSTRUCTED"
+    assert Path(result.recovered_files[0].output_path).suffix == ".pdf"
+
+
+def test_recovery_pipeline_rejects_invalid_pdf(tmp_path: Path) -> None:
+    image_path = tmp_path / "invalid.img"
+    image_path.write_bytes(b"%PDF-1.7\n%%EOF\n")
+
+    result = RecoveryEngine(image_path, tmp_path / "recovered").recover()
+
+    assert len(result.recovered_files) == 1
+    assert result.recovered_files[0].file_type == "PDF"
+    assert result.recovered_files[0].status == "REJECTED"
+
+
+def test_recovery_pipeline_recovers_mp3(tmp_path: Path) -> None:
+    image_path = tmp_path / "audio.img"
+    image_path.write_bytes(b"prefix" + make_valid_mp3())
+
+    result = RecoveryEngine(image_path, tmp_path / "recovered").recover()
+
+    assert len(result.recovered_files) == 1
+    assert result.recovered_files[0].file_type == "MP3"
+    assert result.recovered_files[0].status == "RECONSTRUCTED"
+    assert Path(result.recovered_files[0].output_path).suffix == ".mp3"
+
+
+def test_recovery_pipeline_recovers_mp4(tmp_path: Path) -> None:
+    image_path = tmp_path / "video.img"
+    image_path.write_bytes(b"prefix" + make_valid_mp4())
+
+    result = RecoveryEngine(image_path, tmp_path / "recovered").recover()
+
+    assert len(result.recovered_files) == 1
+    assert result.recovered_files[0].file_type == "MP4"
+    assert result.recovered_files[0].status == "RECONSTRUCTED"
+    assert Path(result.recovered_files[0].output_path).suffix == ".mp4"
+
+
+def test_recovery_pipeline_recovers_gif(tmp_path: Path) -> None:
+    image_path = tmp_path / "image.img"
+    image_path.write_bytes(b"prefix" + make_valid_gif())
+
+    result = RecoveryEngine(image_path, tmp_path / "recovered").recover()
+
+    assert len(result.recovered_files) == 1
+    assert result.recovered_files[0].file_type == "GIF"
+    assert result.recovered_files[0].status == "RECONSTRUCTED"
+    assert Path(result.recovered_files[0].output_path).suffix == ".gif"
+
+
+def test_recovery_pipeline_recovers_bmp(tmp_path: Path) -> None:
+    image_path = tmp_path / "bitmap.img"
+    image_path.write_bytes(b"prefix" + make_valid_bmp())
+
+    result = RecoveryEngine(image_path, tmp_path / "recovered").recover()
+
+    assert len(result.recovered_files) == 1
+    assert result.recovered_files[0].file_type == "BMP"
+    assert result.recovered_files[0].status == "RECONSTRUCTED"
+    assert Path(result.recovered_files[0].output_path).suffix == ".bmp"
+
+
+def test_recovery_pipeline_recovers_tiff(tmp_path: Path) -> None:
+    image_path = tmp_path / "tiff.img"
+    image_path.write_bytes(b"prefix" + make_valid_tiff())
+
+    result = RecoveryEngine(image_path, tmp_path / "recovered").recover()
+
+    assert len(result.recovered_files) == 1
+    assert result.recovered_files[0].file_type == "TIFF"
+    assert result.recovered_files[0].status == "RECONSTRUCTED"
+    assert Path(result.recovered_files[0].output_path).suffix == ".tif"
+
+
+def test_recovery_pipeline_recovers_webp(tmp_path: Path) -> None:
+    image_path = tmp_path / "webp.img"
+    image_path.write_bytes(b"prefix" + make_valid_webp())
+
+    result = RecoveryEngine(image_path, tmp_path / "recovered").recover()
+
+    assert len(result.recovered_files) == 1
+    assert result.recovered_files[0].file_type == "WEBP"
+    assert result.recovered_files[0].status == "RECONSTRUCTED"
+    assert Path(result.recovered_files[0].output_path).suffix == ".webp"

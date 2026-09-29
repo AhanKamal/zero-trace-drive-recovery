@@ -1,293 +1,297 @@
-# Zero Trace Drive Recovery
+# Drive Recovery
 
-JPEG disk image recovery component for the Zero Trace project.
+A modular multi-format recovery tool for carving and validating common image, document, audio, and video artifacts from `.img`/`.dd` images and explicitly selected physical drives on supported Windows environments.
 
-## Overview
+## MVP
 
-Zero Trace Drive Recovery is a lightweight Python-based recovery component designed to identify and recover JPEG files from raw disk images.
+The current implementation supports JPEG, PNG, PDF, MP3, MP4, GIF, BMP, classic TIFF, and WebP recovery from raw disk images.
 
-The current MVP focuses on recovering JPEG files from `.img` and `.dd` disk image files.
+It can:
 
-## Features
+- Scan a disk image for JPEG signatures
+- Scan a disk image for PNG signatures and PNG chunk boundaries
+- Scan a disk image for PDF signatures and structurally supported EOF boundaries
+- Scan a disk image for ID3 and MPEG Layer III frame signatures
+- Scan a disk image for MP4 `ftyp` box signatures
+- Scan a disk image for GIF87a and GIF89a signatures
+- Scan a disk image for BMP `BM` signatures with header validation
+- Scan a disk image for little-endian and big-endian classic TIFF signatures
+- Scan a disk image for RIFF/WEBP signatures at their structural offset
+- Carve complete JPEG files
+- Carve complete PNG files using the PNG chunk structure and IEND marker
+- Carve complete PDF files using trailer, startxref, and %%EOF evidence
+- Carve MP3 streams using ID3 metadata and MPEG Layer III frame lengths
+- Carve MP4 containers using bounded ISO BMFF box sizes
+- Carve GIF streams using logical screen data, block boundaries, and the GIF trailer
+- Carve BMP files using declared file sizes and pixel-data boundaries
+- Carve TIFF files using bounded IFD chains and referenced strip ranges
+- Carve WebP files using RIFF chunk sizes and image payload chunks
+- Detect and preserve partial JPEG fragments
+- Detect and preserve partial PNG fragments
+- Detect and preserve partial PDF fragments
+- Detect and preserve partial MP3 streams with incomplete frames
+- Detect and preserve partial MP4 containers with truncated boxes
+- Detect and preserve partial GIF streams with truncated blocks or missing trailers
+- Detect and preserve partial BMP files truncated before their declared file size
+- Detect and preserve partial TIFF files truncated in IFD or pixel-data ranges
+- Detect and preserve partial WebP files truncated in RIFF chunks
+- Validate recovered JPEG files
+- Validate PNG signatures, chunk CRCs, IEND structure, and image decodability
+- Validate PDF headers, object evidence, trailer, startxref, and %%EOF structure
+- Validate MP3 ID3 metadata and MPEG Layer III frame structure
+- Validate MP4 `ftyp`, `moov`, `mdat`, and safe box boundaries
+- Validate GIF headers, color tables, image data sub-blocks, and trailers
+- Validate BMP headers, DIB fields, dimensions, pixel offsets, and supported uncompressed layouts
+- Validate TIFF byte order, magic 42, IFD entries, typed offsets, image tags, and strip ranges
+- Validate WebP RIFF size, chunk boundaries, and VP8/VP8L/VP8X payload evidence
+- Attempt reconstruction of recoverable JPEG fragments
+- Write recovered files to an output directory
+- Provide recovery statistics through a command-line interface
+- Work with both `.img` and `.dd` disk-image files
+- Read explicitly selected physical drives through bounded read-only access on Windows
+- Separate raw signature hits from overlap-consolidated unique candidates
 
-* Scan raw disk images for JPEG file signatures
-* Detect JPEG file candidates
-* Validate recovered JPEG data
-* Reconstruct recoverable JPEG files
-* Support partial JPEG recovery
-* Assign recovery IDs to recovered files
-* Calculate recovery confidence scores
-* Generate structured recovery results
-* Command-line interface
-* GUI interface for testing and demonstration
-
-## Supported Input
-
-The current MVP supports:
-
-* `.img` disk images
-* `.dd` disk images
-
-Currently supported file type:
-
-* JPEG / JPG
-
-Other file types are not currently part of the MVP.
-
-## Recovery Status
-
-Each detected file is classified into one of the following statuses:
-
-* `RECONSTRUCTED` — File was successfully reconstructed
-* `PARTIAL` — Only part of the file could be recovered
-* `REJECTED` — Candidate did not pass recovery or validation requirements
-
-## How It Works
-
-The recovery pipeline follows these stages:
-
-```text
-Disk Image
-    |
-    v
-Image Reader
-    |
-    v
-JPEG Signature Scanner
-    |
-    v
-Candidate Detection
-    |
-    v
-JPEG Carving
-    |
-    v
-Reconstruction
-    |
-    v
-Validation
-    |
-    v
-Recovered Files
-```
-
-### 1. Read
-
-The disk image is read as raw binary data.
-
-### 2. Scan
-
-The scanner searches the image for known JPEG signatures and identifies possible JPEG file locations.
-
-### 3. Carve
-
-Detected candidates are extracted from the disk image.
-
-### 4. Reconstruct
-
-Recoverable JPEG data is reconstructed into output files.
-
-### 5. Validate
-
-Recovered files are checked to determine whether they are valid, partial, or rejected.
-
-### 6. Output
-
-Recovered files are written to the selected output directory along with their recovery information.
-
-## Project Structure
+## Architecture
 
 ```text
-zero-trace-drive-recovery/
-|
-+-- app/
-|   +-- __main__.py
-|   +-- carver.py
-|   +-- cli.py
-|   +-- gui.py
-|   +-- image_reader.py
-|   +-- reconstruction.py
-|   +-- recovery.py
-|   +-- scanner.py
-|   +-- signatures.py
-|   +-- synthetic_image_generator.py
-|   +-- validator.py
-|
-+-- tests/
-|   +-- test_carver.py
-|   +-- test_cli.py
-|   +-- test_end_to_end.py
-|   +-- test_image_generator.py
-|   +-- test_image_reader.py
-|   +-- test_reconstruction.py
-|   +-- test_recovery.py
-|   +-- test_scanner.py
-|   +-- test_validator.py
-|
-+-- .gitignore
-+-- README.md
-```
+Disk Image (.img / .dd)
+        |
+        v
+Signature Scanner
+        |
+        v
+Format Candidates
+        |
+        v
+Format-Aware Carver
+        |
+        v
+Reconstruction Engine
+        |
+        v
+Format-Aware Validator
+        |
+        v
+Recovered / Partial Files
+Components
+app/image_reader.py
 
-## Installation
+Defines the common bounded raw-data source contract, read-only disk-image reader, and Windows physical-device reader.
 
-Clone the repository:
+app/physical_devices.py
 
-```bash
-git clone https://github.com/AhanKamal/zero-trace-drive-recovery.git
-cd zero-trace-drive-recovery
-```
+Provides safe Windows physical-device enumeration, path validation, and read-only reader factories.
+
+app/signatures.py
+
+Contains extensible format definitions, signatures, end markers, extensions, and support status.
+
+app/scanner.py
+
+Searches the disk image for known file signatures.
+
+app/carver.py
+
+Extracts JPEG, PNG, PDF, MP3, MP4, GIF, BMP, TIFF, and WebP data from detected locations. `JPEGCarver` remains available for compatibility.
+
+app/validator.py
+
+Checks JPEG markers and decodability, validates PNG structure and decodability, conservative PDF structure, MP3 frame structure, MP4 ISO BMFF box structure, GIF block structure, BMP/DIB structure, classic TIFF IFD structure, and WebP RIFF structure.
+
+app/reconstruction.py
+
+Handles reconstruction of recoverable fragments.
+
+app/recovery.py
+
+Coordinates the complete recovery pipeline.
+
+app/cli.py
+
+Provides the command-line interface.
+
+Requirements
+Python 3.10+
+Pillow
+pytest
+Setup
 
 Create a virtual environment:
 
-### Windows
-
-```powershell
 python -m venv .venv
-.venv\Scripts\Activate.ps1
-```
 
-### Linux / macOS
+Activate it:
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-```
+.\.venv\Scripts\Activate.ps1
 
-Install the required dependencies:
+Install dependencies:
 
-```bash
 pip install -r requirements.txt
-```
+Running the Tests
 
-## Running the Recovery Tool
+Run the complete test suite:
 
-The recovery component can be run through the command-line interface or GUI.
+.\.venv\Scripts\python.exe -m pytest
 
-### CLI
+The current test suite contains 136 tests covering:
 
-```bash
-python -m app recover ".\disk.img"
-```
+JPEG carving
+PNG carving and validation
+PDF carving and validation
+MP3 frame detection, carving, validation, and partial recovery
+MP4 box parsing, carving, validation, and partial recovery
+GIF signature detection, parsing, carving, validation, and partial recovery
+BMP signature detection, header parsing, carving, validation, and partial recovery
+Little-endian and big-endian TIFF parsing, carving, validation, and partial recovery
+WebP offset signatures, RIFF parsing, carving, validation, and partial recovery
+Mixed-format end-to-end recovery
+Read-only source abstraction, fake-device reads, source offsets, and output separation
+CLI behavior
+End-to-end recovery
+Image reading
+Reconstruction
+Recovery engine behavior
+Signature scanning
+JPEG, PNG, PDF, MP3, MP4, GIF, BMP, TIFF, and WebP validation
+Recover Files
+
+Basic usage:
+
+.\.venv\Scripts\python.exe -m app recover ".\disk.img"
 
 Specify an output directory:
 
-```bash
-python -m app recover ".\disk.img" --output ".\recovered"
-```
+.\.venv\Scripts\python.exe -m app recover ".\disk.img" --output ".\recovered"
 
-The same command can be used with `.dd` images:
+The same command can be used with .dd images:
 
-```bash
-python -m app recover ".\disk.dd" --output ".\recovered"
-```
+.\.venv\Scripts\python.exe -m app recover ".\disk.dd" --output ".\recovered"
 
-### GUI
+Physical Devices
 
-```bash
-python -m app.gui
-```
+List available physical devices on Windows:
 
-The GUI allows you to select a disk image and output directory before starting recovery.
+.\.venv\Scripts\python.exe -m app devices
 
-## Example
+Recover from an explicitly selected physical device:
 
-Input:
+.\.venv\Scripts\python.exe -m app recover-device "\\.\PhysicalDrive1" --output ".\recovered"
 
-```text
-synthetic_disk.img
-```
+Physical-device recovery is read-only and may require elevated privileges. The output directory must be separate from the source device. The application does not automatically select, mount, modify, format, repair, or write to physical devices.
+Example Output
+Drive Recovery
+==============
 
-Output:
+Source: disk.img
+Output: recovered
 
-```text
-recovered/
+Scanning...
+
+Recovery summary
+----------------
+Files/candidates found: 3
+Successfully recovered: 2
+Partial recoveries: 1
+Rejected: 0
+Output directory: recovered
+
+Recovered files
+---------------
+
+REC-0001.jpg     RECONSTRUCTED  663 bytes
+REC-0002.jpg     RECONSTRUCTED  663 bytes
+REC-0003.jpg     PARTIAL        82 bytes
+Recovery Status
+RECONSTRUCTED
+
+The recovered JPEG, PNG, PDF, MP3, MP4, GIF, BMP, TIFF, or WebP was successfully processed by the recovery and reconstruction pipeline.
+
+PARTIAL
+
+A JPEG, PNG, PDF, MP3, MP4, GIF, BMP, TIFF, or WebP signature was found, but the available data was incomplete. The partial fragment is preserved rather than discarded.
+
+REJECTED
+
+A candidate was detected but did not meet the recovery/validation requirements.
+
+Testing with the Synthetic Disk Image
+
+The project includes synthetic image generators for testing the recovery pipeline without using a real storage device.
+
+Generate a synthetic disk image:
+
+.\.venv\Scripts\python.exe -c "from pathlib import Path; from app.synthetic_image_generator import create_synthetic_disk_image; p=create_synthetic_disk_image(Path(r'.\tmp_final_debug'), filename='synthetic_disk.img'); print('Generated:', p)"
+
+Recover from it:
+
+.\.venv\Scripts\python.exe -m app recover ".\tmp_final_debug\synthetic_disk.img" --output ".\mvp_output"
+Important Note
+
+This is an MVP for JPEG, PNG, PDF, MP3, MP4, GIF, BMP, classic TIFF, and WebP recovery from disk images and explicitly selected physical devices.
+
+It is intended for development, testing and demonstration purposes. It should not be treated as a complete forensic recovery suite.
+
+Currently supported formats
+
+- JPEG/JPG
+- PNG
+- PDF
+- MP3
+- MP4
+- GIF
+- BMP
+- TIFF
+- WebP
+
+Currently supported source types
+
+- Disk images (`.img` and `.dd`)
+- Physical drives on supported Windows environments
+
+Detection-only formats
+
+- ZIP (signature detection only; archive carving and validation are not implemented)
+
+Physical recovery limitations
+
+- Physical-device access may require elevated privileges and depends on Windows device availability.
+- Deleted data may be unavailable after overwrite, SSD TRIM, garbage collection, encryption, or other loss of raw accessibility.
+- Physical-device recovery is not filesystem-aware deleted-file recovery.
+- Fragmented-file reconstruction remains conservative and format-dependent.
+- The project does not claim universal file-format support or complete forensic recovery.
+
+Future formats
+
+Additional image, document, audio, video, archive, executable, database, and forensic formats are future work, along with stronger fragmented-file reconstruction and deeper filesystem-aware recovery. BigTIFF, complex/unsupported TIFF compression variants, and fragmented TIFF/WebP reconstruction are not claimed.
+
+The current MVP does not attempt to recover every possible file format or handle every type of filesystem corruption.
+
+Project Structure
+sih-drive-recovery/
 |
-+-- REC-0001.jpg
-+-- REC-0002.jpg
-+-- REC-0003.jpg
-```
-
-Example recovery results:
-
-```text
-REC-0001    JPEG    RECONSTRUCTED    663 bytes    0.900
-REC-0002    JPEG    RECONSTRUCTED    663 bytes    0.900
-REC-0003    JPEG    PARTIAL           82 bytes    0.550
-```
-
-## Testing
-
-The project includes unit tests and end-to-end tests covering the recovery pipeline.
-
-Run the complete test suite with:
-
-```bash
-pytest -q
-```
-
-The current test suite contains 67 tests covering:
-
-* JPEG carving
-* CLI behavior
-* End-to-end recovery
-* Image reading
-* Reconstruction
-* Recovery engine behavior
-* Signature scanning
-* JPEG validation
-* Synthetic image generation
-
-## MVP Scope
-
-The current MVP is intentionally focused on JPEG recovery from raw disk images.
-
-Included:
-
-* Disk image reading
-* JPEG signature detection
-* JPEG carving
-* JPEG reconstruction
-* JPEG validation
-* Partial recovery handling
-* Confidence scoring
-* CLI
-* GUI
-* Automated tests
-
-Future extensions may include:
-
-* Additional image formats
-* Document recovery
-* Audio recovery
-* Video recovery
-* More advanced filesystem-aware recovery
-* Metadata extraction
-* Improved fragmented-file reconstruction
-* Larger disk image support
-* Integration with the main Zero Trace application
-
-These features are outside the current MVP scope.
-
-## Integration
-
-This repository is intended to serve as a recovery component for the Zero Trace project.
-
-The primary recovery implementation is located in:
-
-```text
-app/recovery.py
-```
-
-Supporting functionality is divided across the scanner, carver, reconstruction, image reader, and validator modules.
-
-## Development
-
-Run the test suite before submitting changes:
-
-```bash
-pytest -q
-```
-
-Keep generated files, disk images, virtual environments, and temporary debugging output outside version control.
-
-
+├── app/
+│   ├── __main__.py
+│   ├── carver.py
+│   ├── cli.py
+│   ├── image_reader.py
+│   ├── physical_devices.py
+│   ├── reconstruction.py
+│   ├── recovery.py
+│   ├── scanner.py
+│   ├── signatures.py
+│   ├── synthetic_image_generator.py
+│   └── validator.py
+|
+├── tests/
+│   ├── test_carver.py
+│   ├── test_cli.py
+│   ├── test_end_to_end.py
+│   ├── test_image_reader.py
+│   ├── test_reconstruction.py
+│   ├── test_recovery.py
+│   ├── test_scanner.py
+│   ├── test_sources.py
+│   └── test_validator.py
+|
+├── README.md
+└── requirements.txt

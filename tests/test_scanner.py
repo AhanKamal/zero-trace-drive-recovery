@@ -39,6 +39,24 @@ def test_png_signature_detection(tmp_path: Path) -> None:
     assert candidates[0].matched_signature == b"\x89PNG\r\n\x1a\n"
 
 
+def test_mp3_id3_signature_detection(tmp_path: Path) -> None:
+    image_path = tmp_path / "mp3.img"
+    image_path.write_bytes(b"prefixID3\x04\x00\x00\x00\x00\x00\x00")
+
+    candidates = SignatureScanner(str(image_path), chunk_size=4).scan()
+
+    assert any(candidate.file_type == "MP3" and candidate.offset == 6 for candidate in candidates)
+
+
+def test_mp3_frame_signature_detection(tmp_path: Path) -> None:
+    image_path = tmp_path / "mp3-frame.img"
+    image_path.write_bytes(b"prefix\xff\xfb\x90\x64")
+
+    candidates = SignatureScanner(str(image_path), chunk_size=4).scan()
+
+    assert any(candidate.file_type == "MP3" and candidate.offset == 6 for candidate in candidates)
+
+
 def test_pdf_signature_detection(tmp_path: Path) -> None:
     image_path = tmp_path / "pdf.img"
     pdf = b"%PDF-1.7\n1 0 obj\n<<>>\nendobj"
@@ -142,4 +160,76 @@ def test_registry_contains_expected_types(registry: SignatureRegistry) -> None:
     definitions = registry.definitions
     names = {entry.file_type for entry in definitions}
 
-    assert names == {"JPEG", "PNG", "PDF", "ZIP"}
+    assert names == {"JPEG", "PNG", "PDF", "MP3", "MP4", "GIF", "BMP", "TIFF", "WEBP", "ZIP"}
+
+
+def test_mp4_ftyp_signature_detection(tmp_path: Path) -> None:
+    image_path = tmp_path / "mp4.img"
+    image_path.write_bytes(b"\x00\x00\x00\x14ftypisom\x00\x00\x00\x00")
+
+    candidates = SignatureScanner(str(image_path), chunk_size=4).scan()
+
+    assert len(candidates) == 1
+    assert candidates[0].file_type == "MP4"
+    assert candidates[0].offset == 4
+    assert candidates[0].matched_signature == b"ftyp"
+
+
+def test_gif_signature_detection(tmp_path: Path) -> None:
+    image_path = tmp_path / "gif.img"
+    image_path.write_bytes(b"prefixGIF87a" + b"GIF89a")
+
+    candidates = SignatureScanner(str(image_path), chunk_size=4).scan()
+
+    assert [(candidate.offset, candidate.matched_signature) for candidate in candidates if candidate.file_type == "GIF"] == [
+        (6, b"GIF87a"),
+        (12, b"GIF89a"),
+    ]
+
+
+def test_bmp_signature_detection(tmp_path: Path) -> None:
+    image_path = tmp_path / "bmp.img"
+    image_path.write_bytes(b"prefixBM\x46\x00\x00\x00")
+
+    candidates = SignatureScanner(str(image_path), chunk_size=4).scan()
+
+    assert len(candidates) == 1
+    assert candidates[0].file_type == "BMP"
+    assert candidates[0].offset == 6
+    assert candidates[0].matched_signature == b"BM"
+
+
+def test_tiff_little_endian_signature_detection(tmp_path: Path) -> None:
+    image_path = tmp_path / "tiff-le.img"
+    image_path.write_bytes(b"prefixII*\x00")
+
+    candidates = SignatureScanner(str(image_path), chunk_size=4).scan()
+
+    assert len(candidates) == 1
+    assert candidates[0].file_type == "TIFF"
+    assert candidates[0].offset == 6
+    assert candidates[0].matched_signature == b"II*\x00"
+
+
+def test_tiff_big_endian_signature_detection(tmp_path: Path) -> None:
+    image_path = tmp_path / "tiff-be.img"
+    image_path.write_bytes(b"prefixMM\x00*")
+
+    candidates = SignatureScanner(str(image_path), chunk_size=4).scan()
+
+    assert len(candidates) == 1
+    assert candidates[0].file_type == "TIFF"
+    assert candidates[0].offset == 6
+    assert candidates[0].matched_signature == b"MM\x00*"
+
+
+def test_webp_offset_signature_detection(tmp_path: Path) -> None:
+    image_path = tmp_path / "webp.img"
+    image_path.write_bytes(b"RIFF\x00\x00\x00\x00WEBP")
+
+    candidates = SignatureScanner(str(image_path), chunk_size=4).scan()
+
+    assert len(candidates) == 1
+    assert candidates[0].file_type == "WEBP"
+    assert candidates[0].offset == 0
+    assert candidates[0].matched_signature == b"WEBP"

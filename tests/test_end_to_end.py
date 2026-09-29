@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from app.recovery import RecoveryEngine
-from app.synthetic_image_generator import create_synthetic_disk_image
+from app.synthetic_image_generator import create_synthetic_disk_image, create_synthetic_multi_format_disk_image
 
 
 def test_end_to_end_synthetic_disk_image_recovery(tmp_path: Path) -> None:
@@ -16,6 +16,8 @@ def test_end_to_end_synthetic_disk_image_recovery(tmp_path: Path) -> None:
     assert result.source_image == str(image_path)
     assert result.recovered_files
     assert image_path.read_bytes() == before
+    assert result.candidates_found == len(result.recovered_files)
+    assert result.raw_signature_hits >= result.candidates_found
 
     recovered_files = [Path(item.output_path) for item in result.recovered_files if item.output_path]
     assert recovered_files
@@ -45,3 +47,19 @@ def test_end_to_end_synthetic_disk_image_recovery(tmp_path: Path) -> None:
             assert item.size > 0
 
     assert not any(file_path.exists() for file_path in image_dir.iterdir() if file_path.name.startswith("REC-"))
+
+
+def test_end_to_end_mixed_format_recovery(tmp_path: Path) -> None:
+    image_path = create_synthetic_multi_format_disk_image(tmp_path / "synthetic")
+    result = RecoveryEngine(image_path, tmp_path / "recovered-output").recover()
+
+    assert {item.file_type for item in result.recovered_files} == {"JPEG", "PNG", "PDF", "MP3", "MP4", "GIF", "BMP", "TIFF", "WEBP"}
+    assert all(item.status in {"RECONSTRUCTED", "PARTIAL"} for item in result.recovered_files)
+    assert any(Path(item.output_path).suffix == ".png" for item in result.recovered_files)
+    assert any(Path(item.output_path).suffix == ".pdf" for item in result.recovered_files)
+    assert any(Path(item.output_path).suffix == ".mp3" for item in result.recovered_files)
+    assert any(Path(item.output_path).suffix == ".mp4" for item in result.recovered_files)
+    assert any(Path(item.output_path).suffix == ".gif" for item in result.recovered_files)
+    assert any(Path(item.output_path).suffix == ".bmp" for item in result.recovered_files)
+    assert any(Path(item.output_path).suffix == ".tif" for item in result.recovered_files)
+    assert any(Path(item.output_path).suffix == ".webp" for item in result.recovered_files)
